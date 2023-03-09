@@ -8,7 +8,7 @@ const inquirer = require('inquirer');
 const util = require('util');
 
 const { isF1tvUrl, isRace } = require('./lib/f1tv-validator');
-const { getContentInfo, getContentStreamUrl, getAdditionalStreamsInfo, getContentParams, saveF1tvToken, getProgramStreamId } = require('./lib/f1tv-api');
+const { getContentInfo, getContentStreamUrl, getAdditionalStreamsInfo, getContentParams, loginF1tv, saveF1tvToken, getProgramStreamId } = require('./lib/f1tv-api');
 
 const getSessionChannelList = (url) => {
     getContentInfo(url)
@@ -55,6 +55,7 @@ const getTokenizedUrl = async (url, content, channel) => {
             outputDirectory: outputDir,
             username: f1Username,
             password: f1Password,
+            token: f1Token,
             streamUrl: streamUrl,
             logLevel: logLevel
         } = yargs
@@ -139,6 +140,11 @@ const getTokenizedUrl = async (url, content, channel) => {
                         alias: 'P',
                         default: process.env.F1TV_PASS || null
                     })
+                    .option('token', {
+                        type: 'string',
+                        desc: "F1TV Entitlement Token",
+                        default: process.env.F1TV_TOKEN || null
+                    })
                     .option('channel-list', {
                         type: 'boolean',
                         desc: 'Provides a list of channels available from url (for videos with multiple cameras)',
@@ -161,6 +167,11 @@ const getTokenizedUrl = async (url, content, channel) => {
             .parse();
 
         log.setLevel(logLevel);
+
+        if (f1Token)
+        {
+            await saveF1tvToken(f1Token);
+        }
 
         if (channelList) return getSessionChannelList(url);
 
@@ -194,7 +205,7 @@ const getTokenizedUrl = async (url, content, channel) => {
                         throw new Error('Please provide a valid username and password.');
                 }
                 log.info('Login required.  This may take 10-30 seconds.');
-                await saveF1tvToken(f1Username, f1Password);
+                await loginF1tv(f1Username, f1Password);
                 log.info('Authorization token encrypted and stored for future use at:', config.makeItGreen(`${config.HOME}${config.PATH_SEP}${config.DS_FILENAME}`));
                 f1tvUrl = await getTokenizedUrl(url, content, channel);
             }
@@ -311,63 +322,66 @@ const getTokenizedUrl = async (url, content, channel) => {
                 '-y'
             ];
 
-        return (includeInternationalAudio && isRace(content))
-            ?  // Use this command when adding international audio
-            ffmpeg()
-                .input(f1tvUrl)
-                .inputOptions(inputOptions)
+        let cmd = ffmpeg()
+            .input(f1tvUrl)
+            .inputOptions(inputOptions);
+
+        // Extra args when adding international audio
+        if (includeInternationalAudio && isRace(content))
+            cmd
                 .input(intlUrl)
                 .inputOptions(intlInputOptions)
-                .outputOptions(options)
-                .on('start', commandLine => {
-                    log.debug('Executing command:', config.makeItGreen(commandLine));
-                })
-                .on('codecData', data => {
-                    log.debug(data.video);
-                    log.debug(data.audio);
-                    log.info('File duration:', config.makeItGreen(data.duration), '\n');
-                })
-                .on('progress', info => {
-                    const outStr = '\rFrames=' + config.makeItGreen(`${info.frames}`.padStart(10)) + ' Fps=' + config.makeItGreen(`${info.currentFps}`.padStart(5) + 'fps') + ' Kbps=' + config.makeItGreen(`${info.currentKbps}`.padStart(7) + 'Kbps') + ' Duration=' + config.makeItGreen(`${info.timemark}`) + ' Percent Complete=' + config.makeItGreen(`${parseInt(info.percent)}`.padStart(3) + '%');
-                    process.stdout.write(outStr);
-                })
-                .on('end', () => {
-                    log.info('\nDownload complete.');
-                })
-                .on('error', e => {
-                    log.error('ffmpeg error:', e.message);
-                    log.debug(e);
-                })
-                .save(outFileSpec)
 
-            : // Use this command for everything else
-            ffmpeg()
-                .input(f1tvUrl)
-                .inputOptions(inputOptions)
-                .outputOptions(options)
-                .on('start', commandLine => {
-                    log.debug('Executing command:', config.makeItGreen(commandLine));
-                })
-                .on('codecData', data => {
-                    log.debug(data.video);
-                    log.debug(data.audio);
-                    log.info('File duration:', config.makeItGreen(data.duration), '\n');
-                })
-                .on('progress', info => {
-                    const outStr = '\rFrames=' + config.makeItGreen(`${info.frames}`.padStart(10)) + ' Fps=' + config.makeItGreen(`${info.currentFps}`.padStart(5) + 'fps') + ' Kbps=' + config.makeItGreen(`${info.currentKbps}`.padStart(7) + 'Kbps') + ' Duration=' + config.makeItGreen(`${info.timemark}`) + ' Percent Complete=' + config.makeItGreen(`${parseInt(info.percent)}`.padStart(3) + '%');
-                    process.stdout.write(outStr);
-                })
-                .on('end', () => {
-                    log.info('\nDownload complete.');
-                })
-                .on('error', e => {
-                    log.error('ffmpeg error:', e.message);
-                    log.debug(e);
-                })
-                .save(outFileSpec);
+        let codecData;
+        // Common
+        cmd
+            .outputOptions(options)
+            .on('start', commandLine => {
+                log.debug('Executing command:', config.makeItGreen(commandLine));
+            })
+            .on('codecData', data => {
+                codecData = data;
+                log.debug(data.video);
+                log.debug(data.audio);
+                log.info('File duration:', config.makeItGreen(data.duration), '\n');
+            })
+            .on('progress', info => {
+                info.percent = timePercentage(info.timemark, codecData.duration);
+                const outStr = '\rFrames=' + config.makeItGreen(`${info.frames}`.padStart(10)) + ' Fps=' + config.makeItGreen(`${info.currentFps}`.padStart(5) + 'fps') + ' Kbps=' + config.makeItGreen(`${info.currentKbps}`.padStart(7) + 'Kbps') + ' Duration=' + config.makeItGreen(`${info.timemark}`) + ' Percent Complete=' + config.makeItGreen(`${parseInt(info.percent)}`.padStart(3) + '%');
+                process.stdout.write(outStr);
+            })
+            .on('end', () => {
+                log.info('\nDownload complete.');
+            })
+            .on('error', e => {
+                log.error('ffmpeg error:', e.message);
+                log.debug(e);
+            })
+            .save(outFileSpec)
+
+        return cmd;
     }
     catch (e) {
         log.error('Error:', e.message);
         log.debug(e);
     }
 })();
+
+
+function parseTime(str)
+{
+    var m = str.match(/^(\d\d):(\d\d):(\d\d).(\d*)$/);
+    if (m)
+        return parseInt(m[1]) * 1000 * 60 * 60 +
+                parseInt(m[2]) * 1000 * 60 + 
+                parseInt(m[3]) * 1000 + 
+                Math.floor(1000 * parseFloat("." + m[4]))
+    return 0;
+}
+
+
+function timePercentage(pos, len)
+{
+    return parseTime(pos) * 100 / parseTime(len);
+}
+
