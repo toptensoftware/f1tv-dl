@@ -8,7 +8,8 @@ Note: a valid username/password is required. The app will save your session so t
 f1tv-dl <url>
 
 Positionals:
-  url  The f1tv url for the video                                       [string]
+  url  The f1tv url for the video (pass "." to just save login credentials and
+       quit)                                                            [string]
 
 Options:
       --help                 Show help                                 [boolean]
@@ -36,6 +37,7 @@ Options:
                                                         [string] [default: null]
   -U, --username             F1TV User name             [string] [default: null]
   -P, --password             F1TV password              [string] [default: null]
+      --token                F1TV Entitlement Token     [string] [default: null]
       --channel-list         Provides a list of channels available from url (for
                              videos with multiple cameras)
                                                       [boolean] [default: false]

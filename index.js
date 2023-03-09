@@ -63,8 +63,10 @@ const getTokenizedUrl = async (url, content, channel) => {
                 yarg
                     .positional('url', {
                         type: 'string',
-                        desc: 'The f1tv url for the video',
+                        desc: 'The f1tv url for the video (pass "." to just save login credentials and quit)',
                         coerce: urlStr => {
+                            if (urlStr == '.')
+                                return '.';
                             if (isF1tvUrl(urlStr)) {
                                 return urlStr;
                             }
@@ -168,9 +170,22 @@ const getTokenizedUrl = async (url, content, channel) => {
 
         log.setLevel(logLevel);
 
+        // Store token if supplied
         if (f1Token)
         {
             await saveF1tvToken(f1Token);
+        }
+
+        // Allow login without download by passing '.' as filename
+        if (url == '.')
+        {
+            // If token not specified, try a user/password login
+            // (NB: currently not working)
+            if (!f1Token)
+                await login();
+
+            // Quit 
+            return;
         }
 
         if (channelList) return getSessionChannelList(url);
@@ -184,35 +199,41 @@ const getTokenizedUrl = async (url, content, channel) => {
         catch (e) {
             log.debug(e);
             if (e.response.status >= 400 && e.response.status <= 499) {
-                if (f1Username == null || f1Password == null) {
-                    const userPrompt = await inquirer.prompt([
-                        {
-                            type: 'input',
-                            name: 'f1Username',
-                            message: 'Enter your F1TV user name:',
-                            default: f1Username
-                        },
-                        {
-                            type: 'password',
-                            name: 'f1Password',
-                            message: 'Enter your F1TV password:',
-                            default: f1Password
-                        }
-                    ]);
-                    f1Username = userPrompt.f1Username;
-                    f1Password = userPrompt.f1Password;
-                    if (f1Username == null || f1Password == null || f1Username.length == 0 || f1Password.length == 0)
-                        throw new Error('Please provide a valid username and password.');
-                }
-                log.info('Login required.  This may take 10-30 seconds.');
-                await loginF1tv(f1Username, f1Password);
-                log.info('Authorization token encrypted and stored for future use at:', config.makeItGreen(`${config.HOME}${config.PATH_SEP}${config.DS_FILENAME}`));
+                await login();
                 f1tvUrl = await getTokenizedUrl(url, content, channel);
             }
             else {
                 throw e;
             }
         }
+
+        async function login()
+        {
+            if (f1Username == null || f1Password == null) {
+                const userPrompt = await inquirer.prompt([
+                    {
+                        type: 'input',
+                        name: 'f1Username',
+                        message: 'Enter your F1TV user name:',
+                        default: f1Username
+                    },
+                    {
+                        type: 'password',
+                        name: 'f1Password',
+                        message: 'Enter your F1TV password:',
+                        default: f1Password
+                    }
+                ]);
+                f1Username = userPrompt.f1Username;
+                f1Password = userPrompt.f1Password;
+                if (f1Username == null || f1Password == null || f1Username.length == 0 || f1Password.length == 0)
+                    throw new Error('Please provide a valid username and password.');
+            }
+            log.info('Login required.  This may take 10-30 seconds.');
+            await loginF1tv(f1Username, f1Password);
+            log.info('Authorization token encrypted and stored for future use at:', config.makeItGreen(`${config.HOME}${config.PATH_SEP}${config.DS_FILENAME}`));
+        }
+
 
         log.debug('tokenized url:', f1tvUrl);
         if (streamUrl) return log.info(f1tvUrl);
